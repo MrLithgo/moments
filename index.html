@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en" >
+<head>
+  <meta charset="UTF-8">
+  <title>car-ramp</title>
+  <link rel="stylesheet" href="./style.css">
+
+</head>
+<body>
+<!-- partial:index.partial.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ramp Speed Investigation</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Montserrat:wght@600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+  
+    <div class="container">
+       <header class="page-header">
+                <h1>Investigating Motion</h1>
+                <button class="quiz-btn">Quiz yourself!</button>
+            </header>
+      
+        
+        <div class="simulation-area" id="simulationArea">
+            <div class="ramp" id="ramp"></div>
+            <div id="car" class="car">
+                <svg width="80" height="50" viewBox="0 0 80 50">
+                    <rect x="5" y="5" width="70" height="40" rx="4" fill="#E74C3C" stroke="#C0392B" stroke-width="2"/>
+                    <circle cx="20" cy="40" r="10" fill="#2C3E50"/>
+                    <circle cx="60" cy="40" r="10" fill="#2C3E50"/>
+                </svg>
+            </div>
+            <div class="light-gate" id="gate1"></div>
+            <div class="light-gate" id="gate2"></div>
+        </div>
+        
+        <div class="controls">
+           <div class="control-group instructions">
+        <h3>Instructions</h3>
+        <div class="instructions-content">
+            <ol>
+              
+                <li>Click "Start Experiment" to release the car</li>
+                <li>The timer will measure time between the two light gates</li>
+               <li>Click "Record Data" to save your results</li>
+              <li>Run the experiment 2 more times</li>
+              
+               <li>You can adjust the ramp height and gate distance using the sliders</li>
+                <li>Calculate speed using: <strong>Speed = Distance ÷ Time</strong></li>
+                <li>Enter your calculated speed in the table</li>
+              
+                
+            </ol>
+        </div>
+    </div>
+            <div class="control-group">
+                <h3>Ramp Settings</h3>
+                <div class="slider-container">
+                    <label for="heightSlider">Ramp Height: <span class="value-display" id="heightValue">0.20 m</span></label>
+                    <input type="range" id="heightSlider" class="slider" min="5" max="40" value="20">
+                </div>
+                <div class="slider-container">
+                    <label for="distanceSlider">Light Gate Distance: <span class="value-display" id="distanceValue">1.00 m</span></label>
+                    <input type="range" id="distanceSlider" class="slider" min="10" max="150" value="100">
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <h3>Timer & Controls</h3>
+                <div class="timer-display" id="timer">0.000 s</div>
+                <div class="status ready" id="status">Ready to start</div>
+                <div class="buttons">
+                    <button class="btn teal-btn" id="startBtn">Start Experiment</button>
+                    <button class="btn navy-btn" id="resetBtn">Reset</button>
+                </div>
+            </div>
+        </div>
+        
+         
+            <div class="control-group">
+               <h3>Results Table</h3>
+            <div class="buttons">
+                <button class="btn gold-btn" id="recordBtn" disabled>Record Data</button>
+                <button class="btn coral-btn" id="clearDataBtn">Clear All Data</button>
+            </div>
+       <table class="data-table">
+         
+    <thead>
+        <tr>
+            <th rowspan="2">Trial Set</th>
+            <th rowspan="2">Height (m)</th>
+            <th rowspan="2">Distance (m)</th>
+            <th colspan="3">Time (s)</th>
+            <th rowspan="2">Avg Time (s)</th>
+            <th rowspan="2">Speed (m/s)</th>
+            <th rowspan="2">Validation</th>
+        </tr>
+        <tr>
+            <th>Trial 1</th>
+            <th>Trial 2</th>
+            <th>Trial 3</th>
+        </tr>
+    </thead>
+    <tbody id="dataTableBody">
+    </tbody>
+</table>
+    </div>
+  </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
+<!-- partial -->
+  <script  src="./script.js"></script>
+
+</body>
+</html>
