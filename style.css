@@ -625,3 +625,34 @@ input.answer-incorrect {
 .controls--wide-gap { gap: 64px; }
 @media (max-width: 768px) { .controls--wide-gap { gap: 16px; } }
 
+
+
+/* Toast/snackbar used for temporary notices */
+.sim-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%) translateY(10px);
+  background: rgba(44,62,80,0.95);
+  color: white;
+  padding: 10px 14px;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(44,62,80,0.18);
+  font-weight: 600;
+  font-size: 14px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(.2,.9,.3,1);
+  z-index: 9999;
+}
+
+/* visible state */
+.sim-toast.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* optional theming class if you want an orange warning style */
+.sim-toast.warn {
+  background: linear-gradient(180deg, #E67E22, #D35400);
+}
