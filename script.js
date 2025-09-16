@@ -1,6 +1,5 @@
-// -----------------------------------------------------
+
 // Globals & constants
-// -----------------------------------------------------
 let masses = [];
 let massCounter = 1;
 let draggedMass = null;
@@ -8,21 +7,56 @@ let dragOffset = { x: 0, y: 0 };
 let activePointerId = null;
 let advancedMode = false;
 
+let balanceNoticeTimeout = null;
+
 let originalParent = null;
 let nextSibling = null;
 
 // Scale inset so ticks/labels/zones/snap sit inside the beam ends
-const SCALE_INSET_PX = 40;        // tweak 24–60 to taste
+const SCALE_INSET_PX = 40;       
 
 // Force & arrow visuals
-const GRAVITY_N_PER_KG = 10;      // 1 kg -> 10 N (as requested)
-const ARROW_PX_PER_NEWTON = 0.8;  // 10 N -> 8 px shaft (1 kg)
+const GRAVITY_N_PER_KG = 10;      
+const ARROW_PX_PER_NEWTON = 0.8;  
 const ARROW_MIN_PX = 12;
-const ARROW_MAX_PX = 60;          // clamp so 5 kg arrow isn’t huge
+const ARROW_MAX_PX = 60;
 
-// -----------------------------------------------------
+
+let toastTimeout = null;
+
+
+function showToast(message, ms = 900) {
+  // remove any existing toast immediately
+  const existing = document.getElementById('sim-toast');
+  if (existing) {
+    existing.remove();
+    if (toastTimeout) { clearTimeout(toastTimeout); toastTimeout = null; }
+  }
+
+  const toast = document.createElement('div');
+  toast.id = 'sim-toast';
+  toast.setAttribute('role', 'status');       // polite announcement
+  toast.setAttribute('aria-live', 'polite');  // screen-reader friendly
+  toast.className = 'sim-toast';
+  toast.textContent = message;
+
+  document.body.appendChild(toast);
+
+  // trigger fade-in (allow CSS transition)
+  requestAnimationFrame(() => toast.classList.add('visible'));
+
+  // remove after ms
+  toastTimeout = setTimeout(() => {
+    toast.classList.remove('visible');
+    // wait for transition to finish (match CSS transition-duration)
+    setTimeout(() => toast.remove(), 260);
+    toastTimeout = null;
+  }, ms);
+}
+
+
+
 // Geometry helpers
-// -----------------------------------------------------
 function getBeamWidth() {
   const beam = document.getElementById('beam');
   return beam ? beam.offsetWidth : 980 * 0.95;
@@ -30,12 +64,10 @@ function getBeamWidth() {
 function getInsetSpacingPx() {
   const bw = getBeamWidth();
   const usable = Math.max(0, bw - 2 * SCALE_INSET_PX);
-  return usable / 24; // 25 marks (-12..+12) => 24 intervals
+  return usable / 24;
 }
 
-// -----------------------------------------------------
 // Init
-// -----------------------------------------------------
 function init() {
   createScale();
   createDropZones();
@@ -46,37 +78,58 @@ function init() {
   // Controls
   document.getElementById('clearAllBtn').addEventListener('click', clearAll);
 
-  // Storage tiles (drag-to-create)
+  // Storage tiles 
   document.querySelectorAll('.mass-option').forEach(option => {
     option.addEventListener('pointerdown', startCreateDrag, { passive: false });
   });
 
-  // Advanced toggle (optional checkbox with id="advancedToggle")
-  const adv = document.getElementById('advancedToggle');
+  // Advanced toggle
+
+const adv = document.getElementById('advancedToggle');
 if (adv) {
   adv.checked = false;
   adv.setAttribute('aria-checked', 'false');
   advancedMode = adv.checked;
 
   adv.addEventListener('change', () => {
+    const wasOn = advancedMode;
     advancedMode = adv.checked;
-    adv.setAttribute('aria-checked', adv.checked ? 'true' : 'false');
+    adv.setAttribute('aria-checked', advancedMode ? 'true' : 'false');
+
+    if (!advancedMode && wasOn) {
+     
+      masses.forEach(m => {
+        try { m.element.remove(); } catch (_) {}
+      });
+      masses = [];
+      massCounter = 1;
+
+      // Reset beam and UI
+      updateBeamBalance();
+      updateMassCount();
+      updateForceArrows();
+      updateMomentFeedback();
+    }
+    
+
+    // Rebuild headings + table for the new mode
+    updateResultsTableHeadings();
+    renderResultsTable();
   });
 }
-  // Moment inputs: validate while typing
-  const leftMoment  = document.getElementById('leftMoment');
-  const rightMoment = document.getElementById('rightMoment');
-  ['input','change','blur'].forEach(ev => {
-    leftMoment?.addEventListener(ev, updateMomentFeedback);
-    rightMoment?.addEventListener(ev, updateMomentFeedback);
-  });
 
+
+  // Render the table 
+  renderResultsTable();
+
+  // Moment inputs: validate while typing 
   updateMomentFeedback();
+
+  // initial arrows if any 
+  updateForceArrows();
 }
 
-// -----------------------------------------------------
 // Scale / zones
-// -----------------------------------------------------
 function createScale() {
   const scale = document.querySelector('.scale');
   scale.innerHTML = '';
@@ -120,9 +173,165 @@ function createDropZones() {
   }
 }
 
-// -----------------------------------------------------
-// Storage tiles (no hooks; just the block with number)
-// -----------------------------------------------------
+// ---------- Render results table (Basic or Advanced) ----------
+
+function createStandardRowsMarkup() {
+  // 4 columns: Side | Total Force (N) | Distance | Moment
+  return `
+    <tr>
+      <td><strong>Left</strong></td>
+      <td><input type="number" id="leftTotalMass" min="0" value="0" readonly></td>
+      <td><input type="number" id="leftDistance" min="0" max="12" value="0"></td>
+      <td><input type="number" id="leftMoment" placeholder="Calculate yourself"></td>
+    </tr>
+    <tr>
+      <td><strong>Right</strong></td>
+      <td><input type="number" id="rightTotalMass" min="0" value="0" readonly></td>
+      <td><input type="number" id="rightDistance" min="0" max="12" value="0"></td>
+      <td><input type="number" id="rightMoment" placeholder="Calculate yourself"></td>
+    </tr>
+  `;
+}
+
+
+function validateAdvancedRow(distInput, momentInput, force) {
+  if (!momentInput) return;
+  const tol = 1e-2; // tolerance in N·m (adjust if you want looser/stricter)
+  const dtxt = (distInput && distInput.value) ? distInput.value.trim() : '';
+  const mtxt = (momentInput && momentInput.value) ? momentInput.value.trim() : '';
+
+  if (mtxt === '' && dtxt === '') {
+    // no inputs yet — clear feedback
+    setInputFeedback(momentInput, null);
+    return;
+  }
+
+  // If distance blank but moment provided, can't validate yet — mark incorrect
+  const d = dtxt === '' ? NaN : Number(dtxt);
+  const m = mtxt === '' ? NaN : Number(mtxt);
+
+  if (!Number.isFinite(d) || !Number.isFinite(m)) {
+    // invalid numeric entry -> mark incorrect
+    setInputFeedback(momentInput, false);
+    return;
+  }
+
+  const expected = force * d;
+  const ok = Math.abs(m - expected) <= tol;
+  setInputFeedback(momentInput, ok);
+}
+
+// Validate all advanced-mode rows currently rendered
+function validateAllAdvancedRows() {
+  // Rows have inputs with classes .distance-input and .moment-input and dataset.massId
+  const tbody = document.querySelector('.data-table table tbody');
+  if (!tbody) return;
+
+  const momentInputs = tbody.querySelectorAll('.moment-input');
+  momentInputs.forEach(mi => {
+    const id = mi.dataset.massId;
+    const di = tbody.querySelector(`.distance-input[data-mass-id="${id}"]`);
+    const forceEl = mi.parentNode.parentNode.querySelector('.force-cell');
+    const force = forceEl ? Number(forceEl.value) : NaN;
+    if (!Number.isFinite(force)) {
+      setInputFeedback(mi, null);
+    } else {
+      validateAdvancedRow(di, mi, force);
+    }
+  });
+}
+
+
+function renderResultsTable() {
+  const tbody = document.querySelector('.data-table table tbody');
+  if (!tbody) return;
+
+  // Clear existing content
+  tbody.innerHTML = '';
+
+  // BASIC MODE: restore two-row layout with expected IDs (students fill moments)
+  if (!advancedMode) {
+    tbody.innerHTML = createStandardRowsMarkup();
+
+    // Attach listeners for left/right moment inputs so validation works (Basic mode)
+    const leftMoment = document.getElementById('leftMoment');
+    const rightMoment = document.getElementById('rightMoment');
+    ['input', 'change', 'blur'].forEach(ev => {
+      leftMoment?.addEventListener(ev, updateMomentFeedback);
+      rightMoment?.addEventListener(ev, updateMomentFeedback);
+    });
+
+    // Ensure totals & moment feedback reflect current masses
+    updateMassCount();
+    updateMomentFeedback();
+    return;
+  }
+
+  // ADVANCED MODE: one row per mass. LEFT masses first, then RIGHT
+  const leftMasses  = masses.filter(m => m.position < 0).sort((a,b) => a.position - b.position);
+  const rightMasses = masses.filter(m => m.position > 0).sort((a,b) => a.position - b.position);
+
+  function makeRowForMass(m) {
+    const tr = document.createElement('tr');
+
+    // Side cell
+    const tdSide = document.createElement('td');
+    tdSide.innerHTML = `<strong>${m.position < 0 ? 'Left' : 'Right'}</strong> (${m.position})`;
+    tr.appendChild(tdSide);
+
+    // Force (readonly)
+    const tdForce = document.createElement('td');
+    const forceInput = document.createElement('input');
+    forceInput.type = 'number';
+    forceInput.value = (m.value * GRAVITY_N_PER_KG) || 0;
+    forceInput.readOnly = true;
+    forceInput.className = 'force-cell';
+    tdForce.appendChild(forceInput);
+    tr.appendChild(tdForce);
+
+    // Distance (student types)
+    const tdDist = document.createElement('td');
+    const distInput = document.createElement('input');
+    distInput.type = 'number';
+    distInput.min = '0';
+    distInput.step = 'any';
+    distInput.className = 'distance-input';
+    distInput.dataset.massId = String(m.id);
+    distInput.value = ''; // students must enter
+    tdDist.appendChild(distInput);
+    tr.appendChild(tdDist);
+
+    // Moment (student types) — validated
+    const tdMoment = document.createElement('td');
+    const momentInput = document.createElement('input');
+    momentInput.type = 'number';
+    momentInput.className = 'moment-input';
+    momentInput.dataset.massId = String(m.id);
+    momentInput.value = '';
+    tdMoment.appendChild(momentInput);
+    tr.appendChild(tdMoment);
+
+    // Wire live validation: when either distance or moment changes, validate this row
+    const force = Number(forceInput.value) || 0;
+    const onChange = () => validateAdvancedRow(distInput, momentInput, force);
+    distInput.addEventListener('input', onChange);
+    momentInput.addEventListener('input', onChange);
+
+    return tr;
+  }
+
+  leftMasses.forEach(m => tbody.appendChild(makeRowForMass(m)));
+  rightMasses.forEach(m => tbody.appendChild(makeRowForMass(m)));
+
+  // Keep summary totals updated
+  updateMassCount();
+
+  // Immediately validate rows (in case any inputs prefilled)
+  validateAllAdvancedRows();
+}
+
+
+// Storage tiles 
 function renderMassOptionTiles() {
   document.querySelectorAll('.mass-option').forEach(opt => {
     const value = parseInt(opt.dataset.value, 10);
@@ -134,10 +343,7 @@ function renderMassOptionTiles() {
   });
 }
 
-// -----------------------------------------------------
-// Create a full mass element (with hooks) for the beam
-// + include a force arrow scaffold
-// -----------------------------------------------------
+// Create a full mass element (with hooks) for the beam + arrow
 function createMassElement(value) {
   const massContainer = document.createElement('div');
   massContainer.className = 'mass-container';
@@ -162,7 +368,7 @@ function createMassElement(value) {
   return massContainer;
 }
 
-// (Optional) programmatic create; not used by storage drag
+// programmatic create (not used by storage drag)
 function createMass(value) {
   const node = createMassElement(value);
   node.dataset.id = massCounter;
@@ -181,13 +387,12 @@ function createMass(value) {
   massCounter++;
   updateBeamBalance();
   updateMassCount();
-  updateForceArrows();     // NEW
+  updateForceArrows();
   updateMomentFeedback();
+  renderResultsTable();
 }
 
-// -----------------------------------------------------
 // Drag creation from storage (pointer events)
-// -----------------------------------------------------
 function startCreateDrag(e) {
   e.preventDefault();
   const value = parseInt(e.currentTarget.dataset.value, 10);
@@ -203,7 +408,7 @@ function startCreateDrag(e) {
   node.style.transform = 'none';
   node.style.position = 'fixed';
   node.style.zIndex = '1000';
-  node.style.bottom = ''; // fixed + bottom don't mix
+  node.style.bottom = '';
 
   // Center under finger
   const rect = node.getBoundingClientRect();
@@ -220,9 +425,7 @@ function startCreateDrag(e) {
   document.querySelectorAll('.drop-zone').forEach(z => z.classList.add('active'));
 }
 
-// -----------------------------------------------------
 // Start drag for an existing mass on the beam (pointer events)
-// -----------------------------------------------------
 function startDrag(e) {
   const container = e.target.closest('.mass-container');
   if (!container) return;
@@ -267,9 +470,7 @@ function startDrag(e) {
   document.querySelectorAll('.drop-zone').forEach(z => z.classList.add('active'));
 }
 
-// -----------------------------------------------------
 // Drag move
-// -----------------------------------------------------
 function drag(e) {
   if (!draggedMass) return;
   if (activePointerId !== null && e.pointerId !== activePointerId) return;
@@ -278,9 +479,7 @@ function drag(e) {
   draggedMass.style.top  = `${e.clientY - dragOffset.y}px`;
 }
 
-// -----------------------------------------------------
 // Helpers for Basic mode (limit one mass per side)
-// -----------------------------------------------------
 function sideOf(pos) {
   if (pos < 0) return 'left';
   if (pos > 0) return 'right';
@@ -295,9 +494,7 @@ function countOnSide(side, excludeId = null) {
   }, 0);
 }
 
-// -----------------------------------------------------
 // End drag (snap, enforce basic-mode limit, cleanup)
-// -----------------------------------------------------
 function endDrag(e) {
   if (!draggedMass || (e && activePointerId !== null && e.pointerId !== activePointerId)) return;
   const node = draggedMass;
@@ -367,13 +564,8 @@ function endDrag(e) {
             if (massObj) massObj.position = originalPos;
           }
 
-          // Brief warning ONLY on rejection
-          const bs = document.getElementById('balanceStatus');
-          if (bs) {
-            const prev = bs.textContent;
-            bs.textContent = 'Basic mode: only one mass per side';
-            setTimeout(() => { updateBeamBalance(); }, 900);
-          }
+          // NEW: show temporary notice (robust, avoids races)
+          showToast('Basic mode: only one mass per side', 2000);
 
           requestAnimationFrame(() => { if (node && node.style) node.style.visibility = 'visible'; });
           return finishCleanup(node);
@@ -417,6 +609,7 @@ function endDrag(e) {
   finishCleanup(node);
 }
 
+
 function cancelDrag(e) {
   endDrag(e);
 }
@@ -424,8 +617,8 @@ function cancelDrag(e) {
 function finishCleanup(node) {
   try { if (activePointerId !== null) node.releasePointerCapture(activePointerId); } catch (_) {}
   node.classList.remove('dragging');
-   node.style.width = '';   // NEW
-  node.style.height = '';  // NEW
+  node.style.width = '';   // clear frozen size
+  node.style.height = '';  // clear frozen size
 
   draggedMass = null;
   originalParent = null;
@@ -440,18 +633,17 @@ function finishCleanup(node) {
 
   updateBeamBalance();
   updateMassCount();
-  updateForceArrows();     // NEW
+  updateForceArrows();
   updateMomentFeedback();
+  renderResultsTable(); // ensure table reflects current masses / mode
 }
 
-// -----------------------------------------------------
 // Beam physics + UI
-// -----------------------------------------------------
 function updateBeamBalance() {
   let leftMoment = 0;
   let rightMoment = 0;
 
-  // Keep physics unchanged (moment ~= mass × position)
+  // Keep physics unchanged (moment = mass × position)
   masses.forEach(mass => {
     const moment = mass.position * mass.value;
     if (mass.position < 0) leftMoment += Math.abs(moment);
@@ -482,24 +674,23 @@ function updateBeamBalance() {
   updateMomentFeedback();
 }
 
-// Results numbers (now force totals, not mass)
+// Results numbers (now force totals)
 function updateMassCount() {
   let leftForce = 0, rightForce = 0;
 
   masses.forEach(m => {
-    const F = m.value * 10; // 10 N per kg
+    const F = m.value * GRAVITY_N_PER_KG;
     if (m.position < 0) leftForce += F;
     else if (m.position > 0) rightForce += F;
   });
 
-  // These inputs remain in your table
   const leftTotal = document.getElementById('leftTotalMass');
   const rightTotal = document.getElementById('rightTotalMass');
   if (leftTotal)  leftTotal.value  = leftForce;
   if (rightTotal) rightTotal.value = rightForce;
 }
 
-
+// Clear all
 function clearAll() {
   masses.forEach(m => m.element.remove());
   masses = [];
@@ -508,17 +699,15 @@ function clearAll() {
   updateMassCount();
   updateForceArrows();
   updateMomentFeedback();
+  renderResultsTable();
 }
 
-// -----------------------------------------------------
 // Force arrows (length & label)
-// -----------------------------------------------------
 function updateForceArrows() {
   masses.forEach(m => {
     const node = m.element;
     let arrow = node.querySelector('.force-arrow');
     if (!arrow) {
-      // If a mass came from older code without an arrow, add one
       arrow = document.createElement('div'); arrow.className = 'force-arrow';
       const shaft = document.createElement('div'); shaft.className = 'force-shaft';
       const head  = document.createElement('div'); head.className  = 'force-head';
@@ -536,9 +725,7 @@ function updateForceArrows() {
   });
 }
 
-// -----------------------------------------------------
 // Moment feedback (✓ / ✗) — uses Force × distance now
-// -----------------------------------------------------
 function getExpectedMoments() {
   let left = 0, right = 0;
   masses.forEach(m => {
@@ -598,27 +785,25 @@ function updateMomentFeedback() {
   }
 }
 
-// -----------------------------------------------------
 // Results table headings (rename to Force / Force×distance)
-// -----------------------------------------------------
 function updateResultsTableHeadings() {
   const ths = document.querySelectorAll('.data-table thead th');
-  // After removing the column, we expect 4 columns:
-  // 0: Side | 1: Total Force (N) | 2: Distance | 3: Moment (Force × Distance)
+  if (!ths || ths.length === 0) return;
   if (ths.length === 4) {
-    ths[1].textContent = 'Total Force (N)';
+    ths[0].textContent = 'Side';
+    ths[1].textContent = advancedMode ? 'Force (N)' : 'Total Force (N)';
+    ths[2].textContent = 'Distance';
     ths[3].textContent = 'Moment (Force × Distance)';
   } else if (ths.length === 5) {
-    // Fallback if column wasn't removed for some reason
-    ths[2].textContent = 'Total Force (N)';
+    // fallback
+    ths[0].textContent = 'Side';
+    ths[2].textContent = advancedMode ? 'Force (N)' : 'Total Force (N)';
+    ths[3].textContent = 'Distance';
     ths[4].textContent = 'Moment (Force × Distance)';
   }
 }
 
-
-// -----------------------------------------------------
 // Boot + resize
-// -----------------------------------------------------
 document.addEventListener('DOMContentLoaded', init);
 
 window.addEventListener('resize', () => {
@@ -633,4 +818,5 @@ window.addEventListener('resize', () => {
   updateBeamBalance();
   updateForceArrows();
   updateMomentFeedback();
+  renderResultsTable();
 });
