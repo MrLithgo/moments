@@ -1,383 +1,636 @@
-class RampSimulation {
-    constructor() {
-        // All values in metres
-        this.rampLength = 2; // Fixed 2m ramp length
-        this.height = 0.2; // 20cm in metres
-        this.gateDistance = 1.0; // 1m gate distance
-        this.currentTime = 0;
-        this.isRunning = false;
-        this.startTime = 0;
-        this.trialCount = 0;
-        this.lastRecordedTime = 0;
-        this.rampWidth = 600; // pixels
-        this.rampLeft = 0;
-        
-        this.initializeElements();
-        this.setupEventListeners();
-        this.updateSimulation();
-        this.currentTrialSet = 1;
-    this.trialTimes = []; // Array to store times for current set
-    this.trialsInCurrentSet = 0; // NEW: Count trials within current set
-    this.trialCount = 0; // Keep this for total trial count if needed elsewhere
-       
+// -----------------------------------------------------
+// Globals & constants
+// -----------------------------------------------------
+let masses = [];
+let massCounter = 1;
+let draggedMass = null;
+let dragOffset = { x: 0, y: 0 };
+let activePointerId = null;
+let advancedMode = false;
+
+let originalParent = null;
+let nextSibling = null;
+
+// Scale inset so ticks/labels/zones/snap sit inside the beam ends
+const SCALE_INSET_PX = 40;        // tweak 24–60 to taste
+
+// Force & arrow visuals
+const GRAVITY_N_PER_KG = 10;      // 1 kg -> 10 N (as requested)
+const ARROW_PX_PER_NEWTON = 0.8;  // 10 N -> 8 px shaft (1 kg)
+const ARROW_MIN_PX = 12;
+const ARROW_MAX_PX = 60;          // clamp so 5 kg arrow isn’t huge
+
+// -----------------------------------------------------
+// Geometry helpers
+// -----------------------------------------------------
+function getBeamWidth() {
+  const beam = document.getElementById('beam');
+  return beam ? beam.offsetWidth : 980 * 0.95;
+}
+function getInsetSpacingPx() {
+  const bw = getBeamWidth();
+  const usable = Math.max(0, bw - 2 * SCALE_INSET_PX);
+  return usable / 24; // 25 marks (-12..+12) => 24 intervals
+}
+
+// -----------------------------------------------------
+// Init
+// -----------------------------------------------------
+function init() {
+  createScale();
+  createDropZones();
+  updateBeamBalance();
+  renderMassOptionTiles();
+  updateResultsTableHeadings();
+
+  // Controls
+  document.getElementById('clearAllBtn').addEventListener('click', clearAll);
+
+  // Storage tiles (drag-to-create)
+  document.querySelectorAll('.mass-option').forEach(option => {
+    option.addEventListener('pointerdown', startCreateDrag, { passive: false });
+  });
+
+  // Advanced toggle (optional checkbox with id="advancedToggle")
+  const adv = document.getElementById('advancedToggle');
+if (adv) {
+  adv.checked = false;
+  adv.setAttribute('aria-checked', 'false');
+  advancedMode = adv.checked;
+
+  adv.addEventListener('change', () => {
+    advancedMode = adv.checked;
+    adv.setAttribute('aria-checked', adv.checked ? 'true' : 'false');
+  });
+}
+  // Moment inputs: validate while typing
+  const leftMoment  = document.getElementById('leftMoment');
+  const rightMoment = document.getElementById('rightMoment');
+  ['input','change','blur'].forEach(ev => {
+    leftMoment?.addEventListener(ev, updateMomentFeedback);
+    rightMoment?.addEventListener(ev, updateMomentFeedback);
+  });
+
+  updateMomentFeedback();
+}
+
+// -----------------------------------------------------
+// Scale / zones
+// -----------------------------------------------------
+function createScale() {
+  const scale = document.querySelector('.scale');
+  scale.innerHTML = '';
+  const spacing = getInsetSpacingPx();
+  const beamWidth = getBeamWidth();
+  const centerPosition = beamWidth / 2;
+
+  for (let i = -12; i <= 12; i++) {
+    const mark = document.createElement('div');
+    mark.className = 'scale-mark';
+    mark.style.position = 'absolute';
+    mark.style.left = `${centerPosition + (i * spacing)}px`;
+    mark.style.transform = 'translateX(-50%)';
+
+    if (i % 2 === 0) {
+      const number = document.createElement('div');
+      number.className = 'scale-number';
+      number.textContent = Math.abs(i);
+      number.style.left = `${centerPosition + (i * spacing)}px`;
+      number.style.transform = 'translateX(-50%)';
+      scale.appendChild(number);
     }
-    
-    initializeElements() {
-        this.ramp = document.getElementById('ramp');
-        this.car = document.getElementById('car');
-        this.gate1 = document.getElementById('gate1');
-        this.gate2 = document.getElementById('gate2');
-        this.timer = document.getElementById('timer');
-        this.status = document.getElementById('status');
-        this.heightSlider = document.getElementById('heightSlider');
-        this.distanceSlider = document.getElementById('distanceSlider');
-        this.heightValue = document.getElementById('heightValue');
-        this.distanceValue = document.getElementById('distanceValue');
-        this.startBtn = document.getElementById('startBtn');
-        this.resetBtn = document.getElementById('resetBtn');
-        this.recordBtn = document.getElementById('recordBtn');
-        this.clearDataBtn = document.getElementById('clearDataBtn');
-        this.dataTableBody = document.getElementById('dataTableBody');
-        
-        // Set initial slider values
-        this.heightSlider.value = this.height * 100; // Convert to cm for slider
-        this.distanceSlider.value = this.gateDistance * 100; // Convert to cm for slider
-        
-        // Update display values
-        this.heightValue.textContent = `${this.height.toFixed(2)} m`;
-        this.distanceValue.textContent = `${this.gateDistance.toFixed(2)} m`;
-        
-        // Calculate ramp position
-        const simulationArea = document.getElementById('simulationArea');
-        const simulationWidth = simulationArea.offsetWidth;
-        this.rampLeft = (simulationWidth - this.rampWidth) / 2;
-    }
-    
-    setupEventListeners() {
-        this.heightSlider.addEventListener('input', () => {
-            this.height = parseInt(this.heightSlider.value) / 100; // Convert cm to m
-            this.heightValue.textContent = `${this.height.toFixed(2)} m`;
-           this.resetTrialProgress();
-            this.updateSimulation();
-        });
-        
-        this.distanceSlider.addEventListener('input', () => {
-            this.gateDistance = parseInt(this.distanceSlider.value) / 100; // Convert cm to m
-            this.distanceValue.textContent = `${this.gateDistance.toFixed(2)} m`;
-           this.resetTrialProgress();
-            this.updateSimulation();
-        });
-        
-        this.startBtn.addEventListener('click', () => this.startExperiment());
-        this.resetBtn.addEventListener('click', () => this.resetExperiment());
-        this.recordBtn.addEventListener('click', () => this.recordData());
-        this.clearDataBtn.addEventListener('click', () => this.clearAllData());
-        
-        // Handle window resize
-        window.addEventListener('resize', () => {
-            const simulationArea = document.getElementById('simulationArea');
-            const simulationWidth = simulationArea.offsetWidth;
-            this.rampLeft = (simulationWidth - this.rampWidth) / 2;
-            this.updateSimulation();
-        });
-    }
-    
-    updateSimulation() {
-        // Update ramp angle based on height
-        const angle = Math.atan(this.height / this.rampLength) * (180 / Math.PI);
-        this.ramp.style.left = `${this.rampLeft}px`;
-        this.ramp.style.transform = `rotate(${angle}deg)`;
-        
-        // Calculate positions along the ramp
-       // Calculate positions along the ramp
-const gate1Distance = (this.rampLength - this.gateDistance) / 2;
-const gate2Distance = gate1Distance + this.gateDistance;
+    scale.appendChild(mark);
+  }
+}
 
-// Get simulation area reference
-const simulationArea = document.getElementById('simulationArea');
-const rampPixelPosition = (50 / 100) * simulationArea.offsetHeight; // 50% from top
+function createDropZones() {
+  const container = document.querySelector('.beam');
+  document.querySelectorAll('.drop-zone').forEach(zone => zone.remove());
+  const spacing = getInsetSpacingPx();
+  const beamWidth = getBeamWidth();
+  const centerPosition = beamWidth / 2;
 
-// Calculate positions in pixels - consistent with car positioning
-const gate1XPixels = this.rampLeft + (gate1Distance / this.rampLength) * this.rampWidth;
-const gate1YPixels = 25 + rampPixelPosition - (gate1Distance / this.rampLength) * (this.height * (this.rampWidth / this.rampLength));
+  for (let i = -12; i <= 12; i++) {
+    const zone = document.createElement('div');
+    zone.className = 'drop-zone';
+    zone.style.left = `${centerPosition + (i * spacing)}px`;
+    zone.style.transform = 'translateX(-50%)';
+    zone.dataset.position = i;
+    container.appendChild(zone);
+  }
+}
 
-const gate2XPixels = this.rampLeft + (gate2Distance / this.rampLength) * this.rampWidth;
-const gate2YPixels = 25 + rampPixelPosition - (gate2Distance / this.rampLength) * (this.height * (this.rampWidth / this.rampLength));
+// -----------------------------------------------------
+// Storage tiles (no hooks; just the block with number)
+// -----------------------------------------------------
+function renderMassOptionTiles() {
+  document.querySelectorAll('.mass-option').forEach(opt => {
+    const value = parseInt(opt.dataset.value, 10);
+    opt.innerHTML = '';
+    const mass = document.createElement('div');
+    mass.className = `mass mass-value-${value}`;
+    mass.textContent = value; // label on the block
+    opt.appendChild(mass);
+  });
+}
 
-// Position gates vertically
-this.gate1.style.left = `${gate1XPixels}px`;
-this.gate1.style.bottom = `${gate1YPixels}px`;
+// -----------------------------------------------------
+// Create a full mass element (with hooks) for the beam
+// + include a force arrow scaffold
+// -----------------------------------------------------
+function createMassElement(value) {
+  const massContainer = document.createElement('div');
+  massContainer.className = 'mass-container';
+  massContainer.dataset.value = String(value);
 
+  const hookTop = document.createElement('div'); hookTop.className = 'hook-top';
+  const hook    = document.createElement('div'); hook.className    = 'hook';
+  const mass    = document.createElement('div'); mass.className    = `mass mass-value-${value}`;
+  mass.textContent = value;
 
-this.gate2.style.left = `${gate2XPixels}px`;
-this.gate2.style.bottom = `${gate2YPixels}px`;
+  // Force arrow scaffold (shaft + head + label)
+  const arrow = document.createElement('div'); arrow.className = 'force-arrow';
+  const shaft = document.createElement('div'); shaft.className = 'force-shaft';
+  const head  = document.createElement('div'); head.className  = 'force-head';
+  const label = document.createElement('div'); label.className = 'force-label';
+  arrow.appendChild(shaft); arrow.appendChild(head); arrow.appendChild(label);
 
-        
-     
+  massContainer.appendChild(hookTop);
+  massContainer.appendChild(hook);
+  massContainer.appendChild(mass);
+  massContainer.appendChild(arrow);
+  return massContainer;
+}
 
-const rampTopPosition = 50; // 50% from top (halfway)
+// (Optional) programmatic create; not used by storage drag
+function createMass(value) {
+  const node = createMassElement(value);
+  node.dataset.id = massCounter;
+  node.dataset.position = 0;
 
+  document.getElementById('beam').appendChild(node);
 
-// Calculate car position based on ramp angle - consistent with animation
-const carXPixels = this.rampLeft;
-const carYPixels = 12 +rampPixelPosition - (Math.sin(angle * Math.PI/180) * 40);
+  const spacing = getInsetSpacingPx();
+  node.style.left = `calc(50% + ${0 * spacing}px)`;
+  node.style.top  = '50px';
+  node.style.transform = ''; // let CSS counter-rotation apply
 
-this.car.style.left = `${carXPixels}px`;
-this.car.style.bottom = `${carYPixels}px`;
-this.car.style.transform = `rotate(${angle}deg)`;
-     
-    }
-    
-    startExperiment() {
-        if (this.isRunning) return;
-        
-        this.isRunning = true;
-        this.currentTime = 0;
-        this.startTime = Date.now();
-        this.startBtn.disabled = true;
-        this.recordBtn.disabled = true;
-        this.status.textContent = 'Car rolling...';
-        this.status.className = 'status running';
-        
-        // Animate car rolling down
-        this.animateCar();
-    }
-    
-    animateCar() {
-    const startTime = Date.now();
-    const gate1Distance = (this.rampLength - this.gateDistance) / 2;
-    const gate2Distance = gate1Distance + this.gateDistance;
-    const angle = Math.atan(this.height / this.rampLength) * (180 / Math.PI);
-    
-    // Calculate speed based on height (simple physics approximation)
-    const speed = Math.sqrt(2 * 9.81 * this.height); // m/s
-    const totalTime = (this.rampLength / speed) * 1000; // ms
-    
-    let gate1Triggered = false;
-    let gate2Triggered = false;
-    let timerStarted = false;
-    let experimentComplete = false;
-    
-    const animate = () => {
-        const elapsed = Date.now() - startTime;
-        const progress = Math.min(elapsed / totalTime, 1);
-        
-        // Move car along ramp
-        const currentDistance = progress * this.rampLength;
-        const simulationArea = document.getElementById('simulationArea');
-        const rampPixelPosition = (50 / 100) * simulationArea.offsetHeight;
-        
-        const carXPixels = this.rampLeft + (currentDistance / this.rampLength) * this.rampWidth;
-        const carYPixels = 12 + rampPixelPosition - (Math.sin(angle * Math.PI/180) * 40) - (currentDistance / this.rampLength) * (this.height * (this.rampWidth / this.rampLength));
-        
-        this.car.style.left = `${carXPixels}px`;
-        this.car.style.bottom = `${carYPixels}px`;
-        this.car.style.transform = `rotate(${angle}deg)`;
-        
-        // Check light gate triggers
-        if (!gate1Triggered && currentDistance >= gate1Distance) {
-            gate1Triggered = true;
-            timerStarted = true;
-            this.gate1.classList.add('active');
-            this.startTime = Date.now();
-            this.updateTimer();
+  node.addEventListener('pointerdown', startDrag, { passive: false });
+
+  masses.push({ id: massCounter, position: 0, value, element: node });
+  massCounter++;
+  updateBeamBalance();
+  updateMassCount();
+  updateForceArrows();     // NEW
+  updateMomentFeedback();
+}
+
+// -----------------------------------------------------
+// Drag creation from storage (pointer events)
+// -----------------------------------------------------
+function startCreateDrag(e) {
+  e.preventDefault();
+  const value = parseInt(e.currentTarget.dataset.value, 10);
+
+  const node = createMassElement(value);
+  draggedMass = node;
+  originalParent = document.getElementById('beam');
+  nextSibling = null;
+
+  document.body.appendChild(node);
+
+  // While dragging, remove counter-rotation and use viewport coords
+  node.style.transform = 'none';
+  node.style.position = 'fixed';
+  node.style.zIndex = '1000';
+  node.style.bottom = ''; // fixed + bottom don't mix
+
+  // Center under finger
+  const rect = node.getBoundingClientRect();
+  dragOffset.x = rect.width / 2;
+  dragOffset.y = rect.height / 2;
+  node.style.left = `${e.clientX - dragOffset.x}px`;
+  node.style.top  = `${e.clientY - dragOffset.y}px`;
+
+  // Document-level listeners (safer cross-browser for newly created node)
+  document.addEventListener('pointermove', drag, { passive: false });
+  document.addEventListener('pointerup', endDrag, { passive: false });
+  document.addEventListener('pointercancel', cancelDrag, { passive: false });
+
+  document.querySelectorAll('.drop-zone').forEach(z => z.classList.add('active'));
+}
+
+// -----------------------------------------------------
+// Start drag for an existing mass on the beam (pointer events)
+// -----------------------------------------------------
+function startDrag(e) {
+  const container = e.target.closest('.mass-container');
+  if (!container) return;
+  e.preventDefault();
+
+  draggedMass = container;
+  draggedMass.classList.add('dragging');
+
+  const massId = parseInt(draggedMass.dataset.id, 10);
+  const massObj = masses.find(m => m.id === massId);
+  draggedMass.dataset.originalPosition = massObj ? massObj.position : 0;
+
+  const rect = draggedMass.getBoundingClientRect();
+  dragOffset.x = e.clientX - rect.left;
+  dragOffset.y = e.clientY - rect.top;
+
+  originalParent = draggedMass.parentNode;
+  nextSibling = draggedMass.nextSibling;
+
+  activePointerId = e.pointerId;
+  try { draggedMass.setPointerCapture(activePointerId); } catch (_) {}
+
+  // Freeze size to avoid reflow jump
+  draggedMass.style.width = `${rect.width}px`;
+  draggedMass.style.height = `${rect.height}px`;
+
+  // Move to <body> so it’s not inside a rotated container
+  document.body.appendChild(draggedMass);
+
+  draggedMass.style.position = 'fixed';
+  draggedMass.style.left = `${e.clientX - dragOffset.x}px`;
+  draggedMass.style.top  = `${e.clientY - dragOffset.y}px`;
+  draggedMass.style.bottom = '';
+  draggedMass.style.transform = 'none';
+  draggedMass.style.zIndex = '1000';
+
+  // Also add document-level listeners
+  document.addEventListener('pointermove', drag, { passive: false });
+  document.addEventListener('pointerup', endDrag, { passive: false });
+  document.addEventListener('pointercancel', cancelDrag, { passive: false });
+
+  document.querySelectorAll('.drop-zone').forEach(z => z.classList.add('active'));
+}
+
+// -----------------------------------------------------
+// Drag move
+// -----------------------------------------------------
+function drag(e) {
+  if (!draggedMass) return;
+  if (activePointerId !== null && e.pointerId !== activePointerId) return;
+  e.preventDefault(); // stops page from scrolling on touch
+  draggedMass.style.left = `${e.clientX - dragOffset.x}px`;
+  draggedMass.style.top  = `${e.clientY - dragOffset.y}px`;
+}
+
+// -----------------------------------------------------
+// Helpers for Basic mode (limit one mass per side)
+// -----------------------------------------------------
+function sideOf(pos) {
+  if (pos < 0) return 'left';
+  if (pos > 0) return 'right';
+  return 'center';
+}
+function countOnSide(side, excludeId = null) {
+  return masses.reduce((n, m) => {
+    if (excludeId !== null && m.id === excludeId) return n;
+    if (side === 'left'  && m.position < 0) return n + 1;
+    if (side === 'right' && m.position > 0) return n + 1;
+    return n;
+  }, 0);
+}
+
+// -----------------------------------------------------
+// End drag (snap, enforce basic-mode limit, cleanup)
+// -----------------------------------------------------
+function endDrag(e) {
+  if (!draggedMass || (e && activePointerId !== null && e.pointerId !== activePointerId)) return;
+  const node = draggedMass;
+
+  // Geometry
+  const beam = document.getElementById('beam');
+  const br = beam.getBoundingClientRect();
+
+  const massRect = node.getBoundingClientRect();
+  const mCX = massRect.left + massRect.width / 2;
+  const mCY = massRect.top  + massRect.height / 2;
+
+  const H_MARGIN = 40, V_MARGIN_TOP = 160, V_MARGIN_BOTTOM = 240;
+  const xWithin = (mCX >= br.left - H_MARGIN) && (mCX <= br.right + H_MARGIN);
+  const yWithin = (mCY >= br.top - V_MARGIN_TOP) && (mCY <= br.bottom + V_MARGIN_BOTTOM);
+  const canSnap = xWithin && yWithin;
+
+  const isNew = !node.dataset.id;
+  const existingId = isNew ? null : parseInt(node.dataset.id, 10);
+  const massObj = isNew ? null : masses.find(m => m.id === existingId);
+  const originalPos = isNew ? 0 :
+    parseInt(node.dataset.originalPosition || String(massObj?.position || 0), 10);
+
+  // Avoid 1-frame flash
+  node.style.visibility = 'hidden';
+  node.style.left = '';
+  node.style.top  = '';
+
+  if (!originalParent) originalParent = beam;
+
+  const spacingPx = getInsetSpacingPx();
+
+  if (canSnap) {
+    if (nextSibling && originalParent) originalParent.insertBefore(node, nextSibling);
+    else if (originalParent) originalParent.appendChild(node);
+
+    node.style.position = 'absolute';
+    node.style.zIndex = '10';
+    node.style.top = '50px';     // top-based layout
+    node.style.transform = '';   // CSS counter-rotation applies
+
+    let position = Math.round((mCX - (br.left + br.width / 2)) / spacingPx);
+    position = Math.max(-12, Math.min(12, position));
+
+    // Basic mode limit (only 1 per side)
+    if (!advancedMode) {
+      const targetSide = sideOf(position);
+      if (targetSide !== 'center') {
+        const existingCount = countOnSide(
+          targetSide,
+          isNew ? null : (massObj ? massObj.id : null)
+        );
+        if (existingCount >= 1) {
+          // Reject the drop
+          if (isNew) {
+            node.remove();
+          } else {
+            if (nextSibling && originalParent) originalParent.insertBefore(node, nextSibling);
+            else if (originalParent) originalParent.appendChild(node);
+
+            node.style.position = 'absolute';
+            node.style.zIndex = '10';
+            node.style.top = '50px';
+            node.style.transform = '';
+            node.style.left = `calc(50% + ${originalPos * spacingPx}px)`;
+            node.dataset.position = originalPos;
+            if (massObj) massObj.position = originalPos;
+          }
+
+          // Brief warning ONLY on rejection
+          const bs = document.getElementById('balanceStatus');
+          if (bs) {
+            const prev = bs.textContent;
+            bs.textContent = 'Basic mode: only one mass per side';
+            setTimeout(() => { updateBeamBalance(); }, 900);
+          }
+
+          requestAnimationFrame(() => { if (node && node.style) node.style.visibility = 'visible'; });
+          return finishCleanup(node);
         }
-        
-        if (!gate2Triggered && currentDistance >= gate2Distance) {
-            gate2Triggered = true;
-            this.gate2.classList.add('active');
-            this.stopTimer();
-            experimentComplete = true;
-            // Don't return here - let the animation continue
-        }
-        
-        if (timerStarted && !experimentComplete) {
-            this.updateTimer();
-        }
-        
-        // Continue animation until car reaches end of ramp
-        if (progress < 1) {
-            requestAnimationFrame(animate);
-        }
-    };
-    
-    animate();
-}
-    updateTimer() {
-    if (this.isRunning) {
-        const actualTime = (Date.now() - this.startTime) / 1000;
-        
-        // Apply 5% variation to the displayed time
-        const variation = 0.05;
-        const randomFactor = 1 + (Math.random() * variation * 2 - variation);
-        this.currentTime = actualTime * randomFactor;
-        
-        this.timer.textContent = `${this.currentTime.toFixed(3)} s`;
+      }
     }
-}
-  
- resetTrialProgress() {
-    // Simply reset the trial progress without creating a new row
-    this.trialsInCurrentSet = 0;
-    this.trialTimes = [];
-    
-    // Update status
-    this.status.textContent = 'Parameters changed. Starting new trial set.';
-    
-    // Reset experiment
-    this.resetExperiment();
-}
-  
-stopTimer() {
-    this.isRunning = false;
-    this.lastRecordedTime = this.currentTime;
-    
-    this.startBtn.disabled = false;
-    this.recordBtn.disabled = false;
-    this.status.textContent = `Trial ${this.trialsInCurrentSet + 1}/3 complete! Time: ${this.lastRecordedTime.toFixed(3)}s`;
-    this.status.className = 'status ready';
-}
-    
-  resetExperiment() {
-    this.isRunning = false;
-    this.currentTime = 0;
-    this.timer.textContent = '0.000 s';
-    this.status.textContent = 'Ready to start';
-    this.status.className = 'status ready';
-    this.startBtn.disabled = false;
-    this.recordBtn.disabled = true; // Disable until a trial is completed
-    this.gate1.classList.remove('active');
-    this.gate2.classList.remove('active');
-  
-    this.updateSimulation();
-    
-    // Don't reset trial data here - only reset when starting a new set
-}
-    
-   recordData() {
-    if (this.lastRecordedTime === 0) return;
-    
-    this.trialsInCurrentSet++;
-    this.trialTimes.push(this.lastRecordedTime);
-   
-    // Create or update the table row after each trial
-    this.updateDataTable();
-    
-    // Update status to show progress
-    this.status.textContent = `Recorded trial ${this.trialsInCurrentSet}/3.`;
-    
-    // If we have 3 trials, finalize the data
-    if (this.trialsInCurrentSet === 3) {
-        // Reset for next trial set
-        this.currentTrialSet++;
-        this.trialsInCurrentSet = 0;
-        this.trialTimes = [];
-        this.recordBtn.disabled = true;
-        
-        // Reset the experiment for the next set of trials
-        this.resetExperiment();
+
+    // Accept the drop
+    node.style.left = `calc(50% + ${position * spacingPx}px)`;
+    node.dataset.position = position;
+
+    if (isNew) {
+      const id = massCounter++;
+      node.dataset.id = String(id);
+      const value = parseInt(node.dataset.value, 10);
+      masses.push({ id, position, value, element: node });
+      node.addEventListener('pointerdown', startDrag, { passive: false });
+    } else if (massObj) {
+      massObj.position = position;
+    }
+  } else {
+    // Not near the beam → remove or revert
+    if (isNew) {
+      node.remove();
+      return finishCleanup(node);
     } else {
-        // Reset for the next trial in the current set
-        this.resetForNextTrial();
-    }
-}
-  
-  updateDataTable() {
-    // Find or create the row for current trial set
-    let row = document.querySelector(`tr[data-trial-set="${this.currentTrialSet}"]`);
-    
-    if (!row) {
-        // Create new row if it doesn't exist
-        row = document.createElement('tr');
-        row.setAttribute('data-trial-set', this.currentTrialSet);
-        row.innerHTML = `
-            <td>${this.currentTrialSet}</td>
-            <td>${this.height.toFixed(2)}</td>
-            <td>${this.gateDistance.toFixed(2)}</td>
-            <td></td><td></td><td></td>
-            <td></td>
-            <td>
-                <input type="number" class="speed-input" placeholder="Enter speed" step="0.01">
-                <span>m/s</span>
-            </td>
-            <td class="validation-cell">
-                <i class="validation-icon"></i>
-            </td>
-        `;
-        this.dataTableBody.appendChild(row);
-      // Add this line after creating the row
+      if (nextSibling && originalParent) originalParent.insertBefore(node, nextSibling);
+      else if (originalParent) originalParent.appendChild(node);
 
+      node.style.position = 'absolute';
+      node.style.zIndex = '10';
+      node.style.top = '50px';
+      node.style.transform = '';
+      node.style.left = `calc(50% + ${originalPos * spacingPx}px)`;
+      node.dataset.position = originalPos;
+      if (massObj) massObj.position = originalPos;
     }
-    
-    // Update the specific trial cell
-    const trialCell = row.cells[2 + this.trialsInCurrentSet]; // Cells 3,4,5 for trials 1,2,3
-    trialCell.textContent = this.lastRecordedTime.toFixed(3);
-    
-    // If all 3 trials are done, calculate and display average
-    if (this.trialsInCurrentSet === 3) {
-        const averageTime = this.trialTimes.reduce((sum, time) => sum + time, 0) / 3;
-        row.cells[6].textContent = averageTime.toFixed(3); // Average cell
-        
-        // Add event listener to the speed input
-        const speedInput = row.querySelector('.speed-input');
-        const validationIcon = row.querySelector('.validation-icon');
-        
-        speedInput.addEventListener('input', () => {
-            this.validateSpeedInput(speedInput, validationIcon, averageTime);
-        });
-    }
-}
-  resetForNextTrial() {
-    // Reset the timer and experiment state but keep trial data
-    this.isRunning = false;
-    this.currentTime = 0;
-    this.timer.textContent = '0.000 s';
-    this.startBtn.disabled = false;
-    this.recordBtn.disabled = false; // Keep enabled for next trial
-    this.gate1.classList.remove('active');
-    this.gate2.classList.remove('active');
-     
-    this.updateSimulation();
-}
-    
-    validateSpeedInput(input, icon, averageTime) {
-    const userSpeed = parseFloat(input.value);
-    const distance = this.gateDistance;
-    
-    if (isNaN(userSpeed)) {
-        input.classList.remove('correct', 'incorrect');
-        icon.className = 'validation-icon';
-        return;
-    }
-    
-    // Calculate actual speed using average time
-    const actualSpeed = distance / averageTime;
-    
-    // Check if user's speed matches actual speed to 2 significant figures
-    const userRounded = parseFloat(userSpeed.toPrecision(2));
-    const actualRounded = parseFloat(actualSpeed.toPrecision(2));
-    
-    // Allow 5% tolerance for the variation
-    const tolerance = 0.05;
-    
-    if (Math.abs(userRounded - actualRounded) / actualRounded <= tolerance) {
-        input.classList.add('correct');
-        input.classList.remove('incorrect');
-        icon.className = 'validation-icon correct fas fa-check';
-    } else {
-        input.classList.add('incorrect');
-        input.classList.remove('correct');
-        icon.className = 'validation-icon incorrect fas fa-times';
-    }
-}
-    
-    clearAllData() {
-        this.dataTableBody.innerHTML = '';
-        this.trialCount = 0;
-    }
+  }
+
+  requestAnimationFrame(() => { if (node && node.style) node.style.visibility = 'visible'; });
+  finishCleanup(node);
 }
 
-// Initialize simulation when page loads
-document.addEventListener('DOMContentLoaded', () => {
-    new RampSimulation();
+function cancelDrag(e) {
+  endDrag(e);
+}
+
+function finishCleanup(node) {
+  try { if (activePointerId !== null) node.releasePointerCapture(activePointerId); } catch (_) {}
+  node.classList.remove('dragging');
+   node.style.width = '';   // NEW
+  node.style.height = '';  // NEW
+
+  draggedMass = null;
+  originalParent = null;
+  nextSibling = null;
+  activePointerId = null;
+
+  document.removeEventListener('pointermove', drag);
+  document.removeEventListener('pointerup', endDrag);
+  document.removeEventListener('pointercancel', cancelDrag);
+
+  document.querySelectorAll('.drop-zone').forEach(z => z.classList.remove('active'));
+
+  updateBeamBalance();
+  updateMassCount();
+  updateForceArrows();     // NEW
+  updateMomentFeedback();
+}
+
+// -----------------------------------------------------
+// Beam physics + UI
+// -----------------------------------------------------
+function updateBeamBalance() {
+  let leftMoment = 0;
+  let rightMoment = 0;
+
+  // Keep physics unchanged (moment ~= mass × position)
+  masses.forEach(mass => {
+    const moment = mass.position * mass.value;
+    if (mass.position < 0) leftMoment += Math.abs(moment);
+    else if (mass.position > 0) rightMoment += moment;
+  });
+
+  const totalMoment = rightMoment - leftMoment;
+  const maxRotation = 15;
+  const rotation = Math.max(-maxRotation, Math.min(maxRotation, totalMoment));
+
+  const beam = document.getElementById('beam');
+  beam.style.transform = `translateX(-50%) rotate(${rotation}deg)`;
+  beam.style.setProperty('--counter-rot', `${-rotation}deg`);
+
+  const balanceStatus = document.getElementById('balanceStatus');
+  if (Math.abs(totalMoment) < 0.1) {
+    balanceStatus.textContent = "Balanced!";
+    balanceStatus.className = "balance-status balanced";
+  } else if (totalMoment > 0) {
+    balanceStatus.textContent = "Clockwise Resultant";
+    balanceStatus.className = "balance-status unbalanced";
+  } else {
+    balanceStatus.textContent = "Anti-clockwise Resultant";
+    balanceStatus.className = "balance-status unbalanced";
+  }
+
+  // Keep moment input feedback in sync
+  updateMomentFeedback();
+}
+
+// Results numbers (now force totals, not mass)
+function updateMassCount() {
+  let leftForce = 0, rightForce = 0;
+
+  masses.forEach(m => {
+    const F = m.value * 10; // 10 N per kg
+    if (m.position < 0) leftForce += F;
+    else if (m.position > 0) rightForce += F;
+  });
+
+  // These inputs remain in your table
+  const leftTotal = document.getElementById('leftTotalMass');
+  const rightTotal = document.getElementById('rightTotalMass');
+  if (leftTotal)  leftTotal.value  = leftForce;
+  if (rightTotal) rightTotal.value = rightForce;
+}
+
+
+function clearAll() {
+  masses.forEach(m => m.element.remove());
+  masses = [];
+  massCounter = 1;
+  updateBeamBalance();
+  updateMassCount();
+  updateForceArrows();
+  updateMomentFeedback();
+}
+
+// -----------------------------------------------------
+// Force arrows (length & label)
+// -----------------------------------------------------
+function updateForceArrows() {
+  masses.forEach(m => {
+    const node = m.element;
+    let arrow = node.querySelector('.force-arrow');
+    if (!arrow) {
+      // If a mass came from older code without an arrow, add one
+      arrow = document.createElement('div'); arrow.className = 'force-arrow';
+      const shaft = document.createElement('div'); shaft.className = 'force-shaft';
+      const head  = document.createElement('div'); head.className  = 'force-head';
+      const label = document.createElement('div'); label.className = 'force-label';
+      arrow.appendChild(shaft); arrow.appendChild(head); arrow.appendChild(label);
+      node.appendChild(arrow);
+    }
+    const N = m.value * GRAVITY_N_PER_KG;
+    const shaftEl = arrow.querySelector('.force-shaft');
+    const labelEl = arrow.querySelector('.force-label');
+
+    const h = Math.max(ARROW_MIN_PX, Math.min(ARROW_MAX_PX, N * ARROW_PX_PER_NEWTON));
+    shaftEl.style.height = `${h}px`;
+    labelEl.textContent = `${N} N`;
+  });
+}
+
+// -----------------------------------------------------
+// Moment feedback (✓ / ✗) — uses Force × distance now
+// -----------------------------------------------------
+function getExpectedMoments() {
+  let left = 0, right = 0;
+  masses.forEach(m => {
+    const F = m.value * GRAVITY_N_PER_KG; // convert mass to force
+    const contrib = Math.abs(m.position) * F;
+    if (m.position < 0) left  += contrib;
+    else if (m.position > 0) right += contrib;
+  });
+  return { left, right };
+}
+
+function setInputFeedback(inputEl, state) {
+  if (!inputEl) return;
+  const td = inputEl.parentNode;
+  let mark = td.querySelector('.feedback-mark');
+  if (!mark) {
+    mark = document.createElement('span');
+    mark.className = 'feedback-mark';
+    td.appendChild(mark);
+  }
+  inputEl.classList.remove('answer-correct', 'answer-incorrect');
+  mark.classList.remove('correct', 'incorrect');
+  mark.textContent = '';
+
+  if (state === true) {
+    inputEl.classList.add('answer-correct');
+    mark.classList.add('correct');
+    mark.textContent = '✓';
+  } else if (state === false) {
+    inputEl.classList.add('answer-incorrect');
+    mark.classList.add('incorrect');
+    mark.textContent = '✗';
+  }
+}
+
+function updateMomentFeedback() {
+  const { left, right } = getExpectedMoments();
+  const leftInput  = document.getElementById('leftMoment');
+  const rightInput = document.getElementById('rightMoment');
+  const tol = 1e-6;
+
+  if (leftInput) {
+    const txt = leftInput.value.trim();
+    if (txt === '') setInputFeedback(leftInput, null);
+    else {
+      const v = Number(txt);
+      setInputFeedback(leftInput, Number.isFinite(v) && Math.abs(v - left) <= tol);
+    }
+  }
+  if (rightInput) {
+    const txt = rightInput.value.trim();
+    if (txt === '') setInputFeedback(rightInput, null);
+    else {
+      const v = Number(txt);
+      setInputFeedback(rightInput, Number.isFinite(v) && Math.abs(v - right) <= tol);
+    }
+  }
+}
+
+// -----------------------------------------------------
+// Results table headings (rename to Force / Force×distance)
+// -----------------------------------------------------
+function updateResultsTableHeadings() {
+  const ths = document.querySelectorAll('.data-table thead th');
+  // After removing the column, we expect 4 columns:
+  // 0: Side | 1: Total Force (N) | 2: Distance | 3: Moment (Force × Distance)
+  if (ths.length === 4) {
+    ths[1].textContent = 'Total Force (N)';
+    ths[3].textContent = 'Moment (Force × Distance)';
+  } else if (ths.length === 5) {
+    // Fallback if column wasn't removed for some reason
+    ths[2].textContent = 'Total Force (N)';
+    ths[4].textContent = 'Moment (Force × Distance)';
+  }
+}
+
+
+// -----------------------------------------------------
+// Boot + resize
+// -----------------------------------------------------
+document.addEventListener('DOMContentLoaded', init);
+
+window.addEventListener('resize', () => {
+  createScale();
+  createDropZones();
+  const spacing = getInsetSpacingPx();
+  masses.forEach(m => {
+    m.element.style.left = `calc(50% + ${m.position * spacing}px)`;
+    m.element.style.top  = '50px';   // top-based layout
+    m.element.style.transform = '';  // let CSS (counter-rotation) apply
+  });
+  updateBeamBalance();
+  updateForceArrows();
+  updateMomentFeedback();
 });
