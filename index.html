@@ -10,17 +10,14 @@
 
 <body>
     <!-- Navigation placeholder -->
-    <div class="nav-placeholder">
-      
-    </div>
-
+   
     <div class="container">
         <div class="page-header">
-            <h1>Turning Forces</h1>
+            <h1>Turning Forces - Investigating Moments</h1>
         </div>
 
         <div class="instructions">
-            Drag masses to different positions on the beam. Try to balance a different mass on each side. Record your results in your table.
+            Drag masses to different positions on the beam. Try to balance a different mass on each side. Add your results to your table.
         
         </div>
 
@@ -47,14 +44,26 @@
             <div class="balance-status" id="balanceStatus"></div>
         </div>
 
-        <div class="controls" style="gap:12px; align-items:center;">
-  <label style="display:flex;gap:8px;align-items:center;">
-    <input type="checkbox" id="advancedToggle">
-    <span>Advanced</span>
-  </label>
-            <button class="btn coral-btn" id="clearAllBtn">Clear All Masses</button>
-          
-        </div>
+       <div class="controls controls--wide-gap">
+  <div class="advanced-toggle">
+    <input
+      id="advancedToggle"
+      class="advanced-toggle__input"
+      type="checkbox"
+      role="switch"
+      aria-checked="false"
+    />
+    <label class="advanced-toggle__label" for="advancedToggle">
+      <span class="advanced-toggle__track">
+        <span class="advanced-toggle__thumb"></span>
+      </span>
+      <span class="advanced-toggle__text">Advanced                         </span>
+    </label>
+  </div>
+
+  <button class="btn coral-btn" id="clearAllBtn">Clear All Masses</button>
+</div>
+
 
         <div class="data-table">
             <div class="table-title">Moments Calculation Table</div>
@@ -62,23 +71,23 @@
                 <thead>
                     <tr>
                         <th>Side</th>
-                        <th>Number of Masses</th>
-                        <th>Total Mass</th>
-                        <th>Distance from Pivot</th>
-                        <th>Moment (Mass × Distance)</th>
+                      
+                        <th>Force (N)</th>
+                        <th>Distance from Pivot (cm)</th>
+                        <th>Moment (Force × Distance) N cm</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
                         <td><strong>Left</strong></td>
-                        <td><input type="number" id="leftMasses" min="0" value="0" readonly></td>
+                        
                         <td><input type="number" id="leftTotalMass" min="0" value="0" readonly></td>
                         <td><input type="number" id="leftDistance" min="0" max="10" value="0"></td>
                         <td><input type="number" id="leftMoment" placeholder="Calculate yourself"></td>
                     </tr>
                     <tr>
                         <td><strong>Right</strong></td>
-                        <td><input type="number" id="rightMasses" min="0" value="0" readonly></td>
+                        
                         <td><input type="number" id="rightTotalMass" min="0" value="0" readonly></td>
                         <td><input type="number" id="rightDistance" min="0" max="10" value="0"></td>
                         <td><input type="number" id="rightMoment" placeholder="Calculate yourself"></td>
@@ -89,9 +98,7 @@
     </div>
 
     <!-- Footer placeholder -->
-    <div class="footer-placeholder">
-        
-    </div>
+   
 
     <script src="script.js"></script>
 </body>
